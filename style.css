@@ -1,0 +1,571 @@
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+body {
+  width: 100%;
+  overflow: hidden;
+  font-family: Tahoma, Verdana, Segoe UI, sans-serif;
+  font-style: normal;
+  margin: 0%;
+  padding: 0%;
+  background-color: white;
+  font-weight: 900;
+}
+
+button {
+  font-family: Tahoma, Verdana, Segoe UI, sans-serif;
+  font-weight: 400;
+  font-size: 1rem;
+  color: rgb(0, 0, 0);
+  background: none;
+
+  cursor: pointer;
+  margin: 0px;
+  gap: 0px;
+  padding: 0px;
+  border: 1px solid #FFFFFF;   /* light */
+
+  user-select: none; /* Standard */
+  -webkit-user-select: none; /* Chrome, Safari, Opera */
+  -moz-user-select: none; /* Firefox */
+  -ms-user-select: none; /* IE/Edge */
+}
+
+/* ==========================================================================
+   .window — outer frame
+   ========================================================================== */
+
+.window {
+  border-top: 1px solid #2563d4;
+  border-left: 2px solid #2563d4;
+  border-right: 2px solid #002088;
+  border-bottom: 2px solid #0831da;
+  border-image: linear-gradient(
+    to bottom,
+    #2563d4,
+    #0831da
+  ) 1;
+  box-shadow:
+    inset 1px 1px 0 #FFFFFF,
+    inset -1px -1px 0 #ACA899;
+
+  margin: 0px;
+  padding: 0px;
+  min-width: 230px;
+}
+
+.hidden {
+  height: 30px;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   .windowBorder — title bar
+   ========================================================================== */
+
+.windowBorder {
+  height: 30px;
+  width: calc(100% - 6px);
+  display: flex;
+  align-items: center;
+  background-color: #0056e3;
+
+  box-shadow:
+    inset 0 1px 4px #3598ff,
+    inset 0 -1px 4px #3598ff;
+
+  padding: 1%;
+  justify-content: space-between;
+}
+
+.windowTitle {
+  width: min-content;
+  height: min-content;
+  color: white;
+  text-shadow: 1.25px 1.5px 0px rgb(0, 0, 0);
+  font-family: "Microsoft Sans Serif", Tahoma, Verdana, sans-serif;
+  font-size: 1rem;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0%;
+  padding: 2%;
+  user-select: none; /* Standard */
+  -webkit-user-select: none; /* Chrome, Safari, Opera */
+  -moz-user-select: none; /* Firefox */
+  -ms-user-select: none; /* IE/Edge */
+}
+
+.windowBorderButtons {
+  display: flex;
+  height: 100%;
+  justify-content: right;
+  align-items: center;
+  gap: 1px;
+}
+
+/* Title bar buttons (min / max / collapse) */
+.border-btn {
+  width: 25px;
+  height: 25px;
+  border-radius: 2px;
+  padding: 0px;
+  margin: 0px;
+  transition: all ease 0s;
+
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(205, 138, 247, 0.45) 0%,
+      rgba(150, 210, 255, 0.35) 12%,
+      rgba(70, 140, 255, 0.18) 28%,
+      transparent 50%
+    ),
+    /* Main blue */
+    linear-gradient(
+      to bottom,
+      #2f5fff,
+      #0066df 55%,
+      #364bf7 100%
+    );
+}
+
+.border-btn:hover {
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(255, 255, 255, 0.55) 0%,
+      rgba(180, 225, 255, 0.45) 15%,
+      rgba(100, 170, 255, 0.22) 32%,
+      transparent 55%
+    ),
+    linear-gradient(
+      to bottom,
+      #5a86ff,
+      #2a7ef5 55%,
+      #4b61ff 100%
+    );
+
+  filter: brightness(1.08);
+}
+
+/* Title bar close button */
+.close-border-btn {
+  width: 25px;
+  height: 25px;
+  border-radius: 2px;
+  padding: 0px;
+  margin: 0px;
+  transition: all ease 0s;
+
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(205, 138, 247, 0.45) 0%,
+      rgba(150, 210, 255, 0.35) 12%,
+      rgba(70, 140, 255, 0.18) 28%,
+      transparent 50%
+    ),
+    /* Main blue */
+    linear-gradient(
+      to bottom,
+      #ff592f,
+      #df5d00 55%,
+      #c54412 100%
+    );
+}
+
+.close-border-btn:hover {
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(255, 255, 255, 0.55) 0%,
+      rgba(180, 225, 255, 0.45) 15%,
+      rgba(100, 170, 255, 0.22) 32%,
+      transparent 55%
+    ),
+    linear-gradient(
+      to bottom,
+      #ff592f,
+      #df5d00 55%,
+      #c54412 100%
+    );
+
+  filter: brightness(1.08);
+}
+
+.border-btn:active, .close-border-btn:active {
+  filter: brightness(0.91);
+}
+
+.border-button-icon {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.border-button-icon img {
+  width: 24px;
+  height: 24px;
+
+  object-fit: contain;
+  display: block;
+}
+
+/* ==========================================================================
+   .bar-buttons — nav bar (Home / Instagram / Tools / Help)
+   ========================================================================== */
+
+.bar-buttons {
+  height: 25px;
+  width: 100%;
+  font-size: 5px;
+  display: flex;
+  margin-bottom: 10px;
+  align-items: center;
+  background-color: #ece9d8;
+}
+
+.bar-buttons button {
+  border: none;
+  font-size: 12px;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  display: flex;
+  text-decoration: none;
+  color: black;
+  width: max-content;
+  margin: 0px;
+  padding: 0px 8px;
+}
+
+.bar-buttons button:hover {
+  border: none;
+  font-size: 12px;
+  background-color: #1560e8;
+
+  color: #fafbfe;
+  white-space: nowrap;
+}
+
+.bar-buttons a {
+  text-decoration: none;
+  color: black;
+  height: 100%;
+  margin: 0px;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+  text-shadow: none;
+  font-weight: 100;
+  font-size: 12px;
+  padding: 0px 8px;
+}
+
+.bar-buttons a:hover {
+  text-decoration: none;
+  color: #fafbfe;
+  background-color: #1560e8;
+}
+
+/* ==========================================================================
+   #mainView — Home screen
+   ========================================================================== */
+
+.main-view {
+
+}
+
+.scan-buttons {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 10px;
+}
+
+.scan-buttons button {
+  width: 100%;
+  height: 35px;
+  margin: 0px;
+  border: none;
+  font-size: small;
+}
+
+.scan-buttons button:hover {
+  background-color: #2f71cd;
+  color: white;
+}
+
+.menu-button-icon {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.menu-button-icon img {
+  width: 24px;
+  height: 24px;
+
+  object-fit: contain;
+  display: block;
+}
+
+/* ==========================================================================
+   #scanner — scan progress bar
+   ========================================================================== */
+
+.progress-bar-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 15px 0;
+}
+
+.progress-text {
+  color: black;
+  margin: 5px 0;
+  font-size: 12px;
+  font-family: Tahoma, Verdana, Segoe UI, sans-serif;
+  font-weight: 100;
+}
+
+#progressBar {
+  display: flex !important;
+  width: 140px !important;
+  height: 20px !important;
+  border: 2px solid #000 !important;
+  background: #c0c0c0 !important;
+  padding: 2px !important;
+  gap: 1px !important;
+}
+
+#progressBar .progress-block {
+  flex: 1 !important;
+  background: #000080 !important;
+  border: 1px solid #000 !important;
+  opacity: 0.3 !important;
+}
+
+#progressBar .progress-block.filled {
+  opacity: 1 !important;
+  background: linear-gradient(to bottom, #0000ff, #00007f) !important;
+}
+
+/* ==========================================================================
+   #helpView — Help screen
+   ========================================================================== */
+
+.help-text {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 100;
+  margin: 10px;
+  gap: 20px;
+  user-select: none; /* Standard */
+  -webkit-user-select: none; /* Chrome, Safari, Opera */
+  -moz-user-select: none; /* Firefox */
+  -ms-user-select: none; /* IE/Edge */
+}
+
+.help-text-important {
+  display: flex;
+  text-align: center;
+  height: 100%;
+  width: 100%;
+}
+
+/* ==========================================================================
+   #compareView — results / combo-box lists
+   ========================================================================== */
+
+.compare-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.combo-container {
+  display: flex;
+  flex-direction: column;
+  margin: 2px;
+  gap: 10px;
+}
+
+.combo {
+  position: relative;
+  width: 200px;
+  height: 22px;
+  display: flex;
+  background: #ffffff;
+  font-family: Tahoma, Verdana, sans-serif;
+  font-size: 11px;
+
+  border-top: 1px solid #808080;
+  border-left: 1px solid #808080;
+  border-right: 1px solid #ffffff;
+  border-bottom: 1px solid #ffffff;
+  user-select: none; /* Standard */
+  -webkit-user-select: none; /* Chrome, Safari, Opera */
+  -moz-user-select: none; /* Firefox */
+  -ms-user-select: none; /* IE/Edge */
+}
+
+.combo-input {
+  flex: 1;
+  padding: 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.combo-arrow {
+  position: relative; /* so the ::after triangle positions against this, not .combo */
+  width: 18px;
+  background: #c0c0c0;
+  border-left: 1px solid #808080;
+  background-image: linear-gradient(
+    to bottom,
+    #ffffff 0%,
+    #c0c0c0 100%
+  );
+}
+
+.combo-arrow::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 6px;
+
+  width: 0;
+  height: 0;
+
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 6px solid black;
+}
+
+.combo-list {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  width: 100%;
+  max-height: 70px;
+  background: #ffffff;
+  display: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-top: 1px solid #808080;
+  border-left: 1px solid #808080;
+  border-right: 1px solid #ffffff;
+  border-bottom: 1px solid #ffffff;
+  z-index: 10;
+}
+
+.combo-list::-webkit-scrollbar {
+  width: 16px;
+}
+
+.combo-list::-webkit-scrollbar-track {
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px #808080,
+    inset -1px -1px #ffffff;
+}
+
+.combo-list::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px #ffffff,
+    inset -1px -1px #808080;
+}
+
+.combo-item {
+  padding: 2px 6px;
+}
+
+.combo-item:hover {
+  background: #000080;
+  color: #ffffff;
+}
+
+.combo-item a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.reset-button-container {
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ==========================================================================
+   #welcomeView — first-run username screen
+   ========================================================================== */
+
+.welcome-view {
+  background-color: #cce3ff;
+  font-weight: 100;
+  color: #16287b;
+}
+
+.welcome-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 30px 0px;
+}
+
+.welcome-view-title {
+  font-weight: 900;
+}
+
+.welcome-input {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0px;
+  gap: 10px;
+}
+
+.welcome-input button {
+  font-size: 13px;
+  background-color: white;
+  padding: 0px 15px;
+  border: 1px solid #10b7ff;
+}
+
+/* ==========================================================================
+   Unused / utility — not referenced by current HTML, kept in case you
+   wire them up later. (Removed: .weclome-view / .weclome-view-title, a
+   misspelled duplicate of .welcome-view that also set red text on a red
+   background — dead code, and actively broken if the typo were ever fixed.)
+   ========================================================================== */
+
+.lato-thin {
+  font-weight: 100;
+  font-style: normal;
+}
+
+.back-button {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+  font-weight: 900;
+  font-family: Tahoma, Verdana, Segoe UI, sans-serif;
+}
+
+.save-button {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}

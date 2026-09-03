@@ -1,0 +1,127 @@
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@200..900&family=Jersey+25&family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&display=swap" rel="stylesheet">
+  </head>
+  <body>
+
+    <div class="window">
+
+        <div class="windowBorder">
+
+          <div class="windowTitle">unfollowed.exe</div>
+
+          <div class="windowBorderButtons">
+            <button id="minBtn" class="border-btn">
+              <div class="border-button-icon"><img src="media/icons/min.png"></div>
+            </button>
+            <button id="maxBtn" class="border-btn">
+              <div class="border-button-icon"><img src="media/icons/max.png"></div>
+            </button>
+            <button id="collapseBtn" class="border-btn">
+              <div class="border-button-icon"><img src="media/icons/collapse.png"></div>
+            </button>
+            <button id="closeBtn" class="close-border-btn">
+              <div class="border-button-icon"><img src="media/icons/close.png"></div>
+            </button>
+          </div>
+
+        </div>
+
+        <div class="window-content">
+          
+          <div class="bar-buttons" id="barButtons">
+            <button id="homeBtn">Home</button>
+            <button id="toolsBtn">Tools</button>
+            <button id="helpBtn">Help</button>
+          </div>
+
+          <!-- HOME TAB -->
+          <div id="mainView" class="main-view">
+            <div class="scan-buttons">
+              <button id="scanBtn" class="menu-button-icon">
+                <img src="media/icons/scan.ico">
+                Scan Instagram
+              </button>
+              <button id="igBtn" class="menu-button-icon">
+                <img src="media/icons/openIg.ico">
+                Open Instagram
+              </button>
+            </div>
+          </div>
+
+            <div id="scanner" style="display: none;">
+              <div style="text-align: center; margin: 10px 0;">
+                <div class="progress-bar-container">
+                  <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div id="progressText" class="progress-text">Scanning...</div>
+              </div>
+            </div>
+            
+          <!-- TOOLS TAB -->
+           <div id="toolsView">
+            <div class="welcome-view-title" style="display: flex; justify-content: center;">
+                Change username
+              </div>
+              <div class="welcome-input">
+                
+              <input id="editUsername" type="text">
+              <button id="editBtn">Ok</button>
+            </div>
+            
+           </div>
+          <!-- Help Screen -->
+          <div id="helpView" style="display:none; color: rgb(0, 0, 0); width: 230px;">
+
+            <div class="help-text"> 
+              <div class="help-text-description">
+                <div>1. Go to your <a href="https://www.instagram.com/" target="_blank">Instagram</a> profile</div>
+                <div>2. Open your followers tab</div>
+                <div>3. Open unfollowed.exe and &nbsp;&nbsp;&nbsp;&nbsp;press&nbsp;<span style="font-weight: 200;">'Scan Followers'</span></div>
+                <div>4. When the end of the list is reached &nbsp;&nbsp;&nbsp;&nbsp;click&nbsp;<span style="font-weight: 200;">'Save'</span></div>
+                <div>5. Do the same for your following tab</div>
+                <div>6. Open unfollowed.exe and press   &nbsp;&nbsp;&nbsp;&nbsp;<span style="font-weight: 200;">'Compare'</span></div>
+              </div>
+              <div class="help-text-important"><u>Important: Do not leave the tab while scanning!</u></div>
+            </div>
+
+          </div>
+
+          <!-- Compare Screen -->
+          <div id="compareView" style="display: none; width: 230px; align-items: center;">
+              <div id="compareContent" class="compare-content"></div>
+              <div class="reset-button-container">
+                <button id="resetBtn" style="width: 100px; font-size: 11px;">Reset</button>
+                <button id="csvBtn" style="width: 100px; font-size: 11px;">Download CSV</button>
+              </div>
+          </div>
+
+          <!-- WELCOME SCREEN -->
+          <div id="welcomeView" class="welcome-view">
+            <div class="welcome-text">
+              <div class="welcome-view-title">Welcome to unfollowed.exe</div>
+              <div>Enter your Instagram username to get started.</div>
+            </div>
+            <div class="welcome-input">
+              <input id="username" type="text" placeholder="@username">
+              <button id="saveUsername">Ok</button>
+            </div>
+            
+          </div>
+
+        </div>
+          
+    </div>
+
+
+
+    
+    
+    <script src="popup.js"></script>
+
+  </body>
+</html>
+
