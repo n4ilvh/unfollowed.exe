@@ -6,6 +6,7 @@ let scannedCount = 0;
 let totalCount = 0;
 let stuckCount = 0;
 let totalMode = null;
+let lastScannedCount = 0;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.command === "openList") {
@@ -21,6 +22,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     totalCount = 0;
     stuckCount = 0;
     totalMode = null;
+    lastScannedCount = 0;
 
     console.log("Scrolling started for mode:", currentMode);
 
@@ -34,33 +36,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       if (!scrollable) return;
 
-      const oldScrollTop = scrollable.scrollTop;
+      scrollable.scrollBy(0, 500);
 
-      scrollable.scrollBy(0, 300);
-
-      collectUsernames();
-
+      // Give Instagram time to render newly loaded users
       setTimeout(() => {
-        const newScrollTop = scrollable.scrollTop;
+        collectUsernames();
 
-        if (newScrollTop === oldScrollTop) {
+        const currentScannedCount =
+          currentMode === "followers"
+            ? followers.size
+            : following.size;
+
+        // Check whether we're still discovering new users
+        if (currentScannedCount === lastScannedCount) {
           stuckCount++;
         } else {
           stuckCount = 0;
+          lastScannedCount = currentScannedCount;
         }
 
-        if (stuckCount >= 10) {
-          const detectedTotal = getTotalCountFromDialog(currentMode);
+        const detectedTotal = getTotalCountFromDialog(currentMode);
 
-          if (detectedTotal > 0 && scannedCount >= detectedTotal) {
-            finishScan();
-          } else {
-            stuckCount = 0;
-          }
+        console.log(
+          `[unfollowed.exe] ${currentMode}: ${currentScannedCount}/${detectedTotal}, no progress: ${stuckCount}`
+        );
+
+        // Only finish if we've reached Instagram's reported total
+        // OR we've been unable to discover anything for a long time.
+        if (
+          detectedTotal > 0 &&
+          currentScannedCount >= detectedTotal
+        ) {
+          finishScan();
+          return;
         }
-        
-      }, 100);
-    }, 200);
+
+        if (stuckCount >= 15) {
+          console.log(
+            `[unfollowed.exe] ${currentMode} appears to be at the end.`
+          );
+          finishScan();
+        }
+      }, 500);
+    }, 700);
 
     sendResponse?.({ status: "scrolling started" });
   }
@@ -89,8 +107,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log("resetData received in content.js");
     followers.clear();
     following.clear();
+    
     scannedCount = 0;
     totalCount = 0;
+    stuckCount = 0;
+    lastScannedCount = 0;
+    totalMode = null;
   }
 
   if (message.action === "getProgress") {
@@ -393,26 +415,45 @@ function updateProgressTracking() {
 }
 
 function getTotalCountFromDialog(mode) {
-  // Try the profile header stat first (most reliable when present).
   const selector =
     mode === "followers"
       ? `a[href$="/followers/"] span span`
       : `a[href$="/following/"] span span`;
-  console.log
 
   const headerEl = document.querySelector(selector);
+
   if (headerEl) {
     const text = headerEl.textContent || headerEl.innerText;
     const match = text.match(/[\d,.kKmM]+/);
-    if (match) return parseCountText(match[0]);
+
+    if (match) {
+      const total = parseCountText(match[0]);
+
+      console.log(
+        `[unfollowed.exe] ${mode} total detected: ${total} from "${text}"`
+      );
+
+      return total;
+    }
   }
 
-  // Fall back to the dialog's own header text, e.g. "Followers".
-  const dialogHeader = document.querySelector('[role="dialog"] h1, [role="dialog"] header')
-    ?.textContent;
+  // Fall back to dialog header
+  const dialogHeader = document.querySelector(
+    '[role="dialog"] h1, [role="dialog"] header'
+  )?.textContent;
+
   if (dialogHeader) {
     const match = dialogHeader.match(/[\d,.kKmM]+/);
-    if (match) return parseCountText(match[0]);
+
+    if (match) {
+      const total = parseCountText(match[0]);
+
+      console.log(
+        `[unfollowed.exe] ${mode} total detected from dialog: ${total}`
+      );
+
+      return total;
+    }
   }
 
   return 0;
