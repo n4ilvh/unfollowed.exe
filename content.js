@@ -49,9 +49,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           stuckCount = 0;
         }
 
-        if (stuckCount >= 5) {
-          finishScan();
+        if (stuckCount >= 10) {
+          const detectedTotal = getTotalCountFromDialog(currentMode);
+
+          if (detectedTotal > 0 && scannedCount >= detectedTotal) {
+            finishScan();
+          } else {
+            stuckCount = 0;
+          }
         }
+        
       }, 100);
     }, 200);
 
@@ -98,42 +105,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Tries several strategies to find the clickable element that opens the
 // followers/following overlay. Returns the element, or null.
 function findListTrigger(mode) {
-  // Strategy 1: a real <a href="/user/following/"> (works when IG still
-  // uses semantic links).
-  let el =
-    document.querySelector(`a[href$="/${mode}/"]`) ||
-    document.querySelector(`a[href$="/${mode}"]`);
-  if (el) return el;
+  const isUsable = (el) => {
+    if (el.closest('[role="dialog"]')) return false; // ignore dialog remnants
+    if (el.offsetParent === null && getComputedStyle(el).position !== "fixed") {
+      return false; // not actually visible/rendered
+    }
+    return true;
+  };
 
-  // Strategy 2: any <a href="/..."> whose *path* (not just string suffix)
-  // ends with /mode - catches hrefs with query strings etc.
-  const anchors = document.querySelectorAll('a[href^="/"]');
+  const scope = document.querySelector("header") || document;
+
+  // Strategy 1/2: real hrefs, kept as a cheap first try in case Instagram
+  // ever brings semantic links back. Harmless if they don't match.
+  let el =
+    scope.querySelector(`a[href$="/${mode}/"]`) ||
+    scope.querySelector(`a[href$="/${mode}"]`);
+  if (el && isUsable(el)) return el;
+
+  const anchors = scope.querySelectorAll('a[href^="/"]');
   for (const a of anchors) {
+    if (!isUsable(a)) continue;
     try {
       const path = new URL(a.getAttribute("href"), location.href).pathname;
       if (new RegExp(`^/[^/]+/${mode}/?$`).test(path)) return a;
-    } catch (e) {
-      // ignore malformed hrefs
-    }
+    } catch (e) {}
   }
 
-  // Strategy 3: text-based match. Instagram often renders this as
-  // "1,234 following" (or just "following") on a non-<a> element like a
-  // <div role="button">. Match on the visible text, then climb to the
-  // nearest clickable ancestor.
+  // Strategy 3 (the one that actually matters here): Instagram renders
+  // "945 followers" as plain text on a <span> with NO href - the click is
+  // handled by a JS listener higher up the tree, not a real link. So
+  // instead of hunting for a specific clickable wrapper, just find the
+  // deepest element whose text matches and click IT directly - the click
+  // will bubble up to whatever handler Instagram attached above it.
   const textRegex = new RegExp(`^[\\d,.\\s]*[kKmM]?\\s*${mode}$`, "i");
-  const candidates = document.querySelectorAll("a, div, span, button, li");
+  const candidates = scope.querySelectorAll("span, div, a, button, li");
+  let bestMatch = null;
 
   for (const candidate of candidates) {
+    if (!isUsable(candidate)) continue;
+
     const text = (candidate.textContent || "").trim();
 
     if (text.length > 0 && text.length < 40 && textRegex.test(text)) {
-      const clickable =
-        candidate.closest('a, button, [role="link"], [role="button"]') ||
-        candidate;
-      return clickable;
+      const hasMatchingChild = Array.from(
+        candidate.querySelectorAll("span, div, a, button, li")
+      ).some((child) => textRegex.test((child.textContent || "").trim()));
+
+      if (!hasMatchingChild) {
+        const clickable =
+          candidate.closest('a, button, [role="link"], [role="button"]') || candidate;
+        if (isUsable(clickable)) {
+          bestMatch = clickable;
+          break;
+        }
+      }
     }
   }
+
+  if (bestMatch) return bestMatch;
+
+  const allHeaderLinks = Array.from(scope.querySelectorAll("a")).map((a) => ({
+    href: a.getAttribute("href"),
+    text: (a.textContent || "").trim().slice(0, 40)
+  }));
+  console.log(`[unfollowed.exe] Could not find "${mode}" trigger. Header links seen:`, allHeaderLinks);
 
   return null;
 }
@@ -152,22 +187,29 @@ async function openListAndWait(mode, timeout = 15000) {
     await sleep(300);
   }
 
+  if (!trigger) {
+    console.log(`Couldn't find the "${mode}" link on this page. Check the console for a list of header links seen.`);
+    return {
+      success: false,
+      reason: `Couldn't find the "${mode}" link on this page. Check the console for a list of header links seen.`
+    };
+  }
+
   for (let attempt = 0; attempt < 3; attempt++) {
-    trigger.click();
+    dispatchFullClick(trigger);
 
     const dialog = await waitForDialog(4000);
     if (dialog) {
       return { success: true };
     }
 
-    // Re-find in case the DOM re-rendered between attempts.
     trigger = findListTrigger(mode) || trigger;
     await sleep(300);
   }
 
   return {
     success: false,
-    reason: `Error. Try scrolling to the top of the profile and running the scan again.`
+    reason: `Found the "${mode}" link but clicking it didn't open the list. Try scrolling to the top of the profile and running the scan again.`
   };
 }
 
@@ -234,8 +276,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function dispatchFullClick(el) {
+  const rect = el.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+
+  const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+    const EventClass = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new EventClass(type, opts));
+  });
+
+  el.click(); // fallback, harmless if the above already worked
+}
+
 // ---------------------------------------------------------------------
-// Scrolling + collecting usernames (unchanged in spirit from before)
+// Scrolling + collecting usernames 
 // ---------------------------------------------------------------------
 
 function getElementAtCenter() {
@@ -341,6 +398,7 @@ function getTotalCountFromDialog(mode) {
     mode === "followers"
       ? `a[href$="/followers/"] span span`
       : `a[href$="/following/"] span span`;
+  console.log
 
   const headerEl = document.querySelector(selector);
   if (headerEl) {

@@ -329,7 +329,7 @@ port.onMessage.addListener((message) => {
 });
 
 async function startFullScan() {
-  console.log("Starting full Instagram scan");
+  // document.getElementById("progressText").textContent += "Starting full Instagram scan";
 
   const [tab] = await chrome.tabs.query({
     active: true,
@@ -343,7 +343,7 @@ async function startFullScan() {
     return;
   }
 
-  else if (!tab || !tab.url?.includes(username)) {
+  else if (!tab || !tab.url?.includes(username.value.trim().replace(/^@/, ""))) {
     showScanningUI();
     document.getElementById("progressText").textContent =
       "Please open your Instagram profile first.";
