@@ -35,7 +35,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.command === "usernamesCollected") {
-    handleUsernamesCollected(message);
+    handleUsernamesCollected(message, sender);
     return true;
   }
 
@@ -109,7 +109,7 @@ function openAndScan(tabId, mode) {
   });
 }
 
-function handleUsernamesCollected(message) {
+function handleUsernamesCollected(message, sender) {
   const { followers = [], following = [] } = message.data || {};
 
   const patch = {};
@@ -121,29 +121,50 @@ function handleUsernamesCollected(message) {
     scanState.stage = "followers";
     chrome.storage.local.set({ scanStage: "followers" });
 
-    if (!scanState.tabId) {
+    // MV3 service workers can be restarted mid-scan and lose scanState, so
+    // fall back to the tab that sent this message.
+    const tabId = scanState.tabId || sender?.tab?.id;
+    if (!tabId) {
       failScan("Lost track of the Instagram tab.");
       return;
     }
+    scanState.tabId = tabId;
 
     // Close the "Following" dialog before opening "Followers" - Instagram
     // won't open a second overlay on top of the first one.
-    closeAnyOpenDialog(scanState.tabId).then(() => {
-      openAndScan(scanState.tabId, "followers");
+    closeAnyOpenDialog(tabId).then(() => {
+      openAndScan(tabId, "followers");
     });
     return;
   }
 
   if (message.mode === "followers") {
-    finishFullScan(following, followers);
+    // Use the saved Following list rather than whatever content.js happens
+    // to still be holding in memory.
+    chrome.storage.local.get("following", (stored) => {
+      const savedFollowing = stored.following?.length ? stored.following : following;
+      finishFullScan(savedFollowing, followers);
+    });
   }
 }
 
 function closeAnyOpenDialog(tabId) {
   return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      setTimeout(resolve, 400);
+    };
+
+    // Never let the whole workflow hang waiting on the page. If the dialog
+    // really is stuck open, content.js's openList will report that clearly.
+    setTimeout(done, 8000);
+
     chrome.tabs.sendMessage(tabId, { command: "closeDialog" }, () => {
       // Ignore errors - if there's nothing to close, that's fine too.
-      setTimeout(resolve, 400);
+      void chrome.runtime.lastError;
+      done();
     });
   });
 }

@@ -113,6 +113,16 @@ document.getElementById("homeBtn").addEventListener("click", () => {
   document.getElementById("scanner").style.display = "none";
 });
 
+// VIEW SCREEN
+document.getElementById("viewBtn").addEventListener("click", () => {
+  document.getElementById("barButtons").style.display = "flex";
+  document.getElementById("mainView").style.display = "none";
+  document.getElementById("helpView").style.display = "none";
+  document.getElementById("toolsView").style.display = "none";
+  document.getElementById("compareView").style.display = "block";
+  document.getElementById("scanner").style.display = "none";
+});
+
 // TOOLS SCREEN
 document.getElementById("toolsBtn").addEventListener("click", () => {
   document.getElementById("toolsView").style.display = "block";
@@ -243,7 +253,7 @@ document.getElementById("csvBtn").addEventListener("click", () => {
 // ---------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message) => {
   if (message.command === "progressUpdate") {
-    updateProgress(message.scanned, message.total);
+    updateProgress(message.scanned, message.total, message.mode);
   }
 
   if (message.command === "scanComplete") {
@@ -324,7 +334,7 @@ const port = chrome.runtime.connect({ name: "popup" });
 
 port.onMessage.addListener((message) => {
   if (message.command === "progressUpdate") {
-    updateProgress(message.scanned, message.total);
+    updateProgress(message.scanned, message.total, message.mode);
   }
 });
 
@@ -386,7 +396,7 @@ function initializeProgressBar() {
   }
 }
 
-function updateProgress(scanned, total) {
+function updateProgress(scanned, total, mode) {
   const progressText = document.getElementById("progressText");
   const progressBar = document.getElementById("progressBar");
 
@@ -410,10 +420,14 @@ function updateProgress(scanned, total) {
     }
   });
 
+  // Say which list is being scanned so the automatic Following -> Followers
+  // hand-off is visible.
+  const label = mode ? `${mode[0].toUpperCase()}${mode.slice(1)} - ` : "";
+
   progressText.textContent =
     total > 0
-      ? `Scanned: ${scanned} of ${total} (${percent}%)`
-      : `Scanned: ${scanned} users`;
+      ? `${label}Scanned: ${scanned} of ${total} (${percent}%)`
+      : `${label}Scanned: ${scanned} users`;
 }
 
 function downloadCSV(data) {

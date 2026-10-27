@@ -8,6 +8,30 @@ let stuckCount = 0;
 let totalMode = null;
 let lastScannedCount = 0;
 
+// Totals read from the profile header ("945 followers") BEFORE the list is
+// opened. This is the reliable source: once the dialog is open Instagram
+// doesn't repeat the count anywhere we can read it.
+const expectedTotals = { followers: 0, following: 0 };
+
+// Paths that look like usernames to the regex but are really app routes.
+const RESERVED_PATHS = new Set([
+  "explore", "reels", "reel", "direct", "accounts", "stories", "p", "tv",
+  "about", "legal", "privacy", "terms", "directory", "web", "api", "emails",
+  "challenge", "nametag", "session", "oauth", "developer", "docs",
+  "popular", "popular_users", "home", "inbox", "notifications", "search",
+  "create", "saved", "settings", "login", "signup", "verified", "tags",
+  "locations", "topics", "business", "help", "press", "jobs", "blog", "ads"
+]);
+
+// The user's own handle (saved by the popup). It sits in the page nav and
+// must never be counted as a follower/following.
+let ownUsername = "";
+try {
+  chrome.storage.local.get("username", (r) => {
+    ownUsername = (r?.username || "").toLowerCase();
+  });
+} catch (e) {}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.command === "openList") {
     openListAndWait(message.mode).then((result) => {
@@ -23,6 +47,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     stuckCount = 0;
     totalMode = null;
     lastScannedCount = 0;
+
+    // Start this list from a clean slate so leftovers from an earlier or
+    // aborted scan can't inflate the count.
+    (currentMode === "followers" ? followers : following).clear();
+    totalCount = expectedTotals[currentMode] || 0;
+    totalMode = currentMode;
 
     console.log("Scrolling started for mode:", currentMode);
 
@@ -40,6 +70,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       // Give Instagram time to render newly loaded users
       setTimeout(() => {
+        if (!scrollInterval) return; // scan already finished/stopped
+
         collectUsernames();
 
         const currentScannedCount =
@@ -55,7 +87,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           lastScannedCount = currentScannedCount;
         }
 
-        const detectedTotal = getTotalCountFromDialog(currentMode);
+        const detectedTotal = getExpectedTotal(currentMode);
 
         console.log(
           `[unfollowed.exe] ${currentMode}: ${currentScannedCount}/${detectedTotal}, no progress: ${stuckCount}`
@@ -99,7 +131,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.command === "closeDialog") {
-    closeDialog().then(() => sendResponse?.({ closed: true }));
+    // Always answer, even on failure - background.js waits on this reply.
+    closeDialog()
+      .then((closed) => sendResponse?.({ closed }))
+      .catch((err) => sendResponse?.({ closed: false, error: String(err) }));
     return true;
   }
 
@@ -200,6 +235,19 @@ function findListTrigger(mode) {
 // click a couple of times in case the first click lands before handlers
 // are attached.
 async function openListAndWait(mode, timeout = 15000) {
+  // If any dialog is already open (a leftover list, a notifications prompt)
+  // waitForDialog() below would instantly "succeed" on it and we'd scan the
+  // wrong list under the wrong label. Start from a known-clean page.
+  if (getListDialog()) {
+    const closed = await closeDialog();
+    if (!closed) {
+      return {
+        success: false,
+        reason: "Couldn't close the dialog that's already open. Close it manually and try again."
+      };
+    }
+  }
+
   const start = Date.now();
   let trigger = null;
 
@@ -216,6 +264,11 @@ async function openListAndWait(mode, timeout = 15000) {
       reason: `Couldn't find the "${mode}" link on this page. Check the console for a list of header links seen.`
     };
   }
+
+  // Remember how many Instagram says there are (e.g. "945 followers").
+  const headerTotal = readTotalFromTrigger(trigger);
+  expectedTotals[mode] = headerTotal;
+  console.log(`[unfollowed.exe] ${mode} total from profile header: ${headerTotal}`);
 
   for (let attempt = 0; attempt < 3; attempt++) {
     dispatchFullClick(trigger);
@@ -236,40 +289,77 @@ async function openListAndWait(mode, timeout = 15000) {
 }
 
 // Instagram won't open a second overlay on top of the first, so we need to
-// close "Following" before opening "Followers". Try the visible close
-// button first, fall back to simulating Escape.
-function closeDialog() {
-  return new Promise((resolve) => {
-    const dialog = document.querySelector('[role="dialog"]');
-    if (!dialog) {
-      resolve();
-      return;
-    }
+// close "Following" before opening "Followers". Resolves true once no dialog
+// is left, false if every strategy failed. Never throws.
+//
+// NOTE: Instagram's close "X" is an <svg aria-label="Close"> inside a
+// <div role="button">, not a <button>. SVG elements have no .click()
+// method, so calling it on the svg throws - we click the wrapping element
+// with real mouse events instead.
+async function closeDialog() {
+  if (!getListDialog()) return true;
 
-    const closeIcon = dialog.querySelector(
-      'button[aria-label="Close"], svg[aria-label="Close"]'
-    );
-
-    if (closeIcon) {
-      (closeIcon.closest("button") || closeIcon).click();
-    } else {
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Escape",
-          code: "Escape",
-          keyCode: 27,
-          bubbles: true
-        })
+  const strategies = [
+    () => {
+      const dialog = getListDialog();
+      const icon = dialog?.querySelector(
+        'svg[aria-label="Close"], button[aria-label="Close"], [role="button"][aria-label="Close"]'
       );
+      if (!icon) return;
+      const target =
+        icon.closest('button, [role="button"]') || icon.parentElement || icon;
+      dispatchFullClick(target);
+    },
+    () => pressEscape(),
+    () => {
+      // Click the dimmed backdrop outside the dialog.
+      const backdrop = document.elementFromPoint(5, 5);
+      if (backdrop && !backdrop.closest('[role="dialog"]')) {
+        dispatchFullClick(backdrop);
+      }
     }
+  ];
 
+  for (const strategy of strategies) {
+    try {
+      strategy();
+    } catch (err) {
+      console.warn("[unfollowed.exe] close strategy failed:", err);
+    }
+    if (await waitForDialogGone(1500)) return true;
+  }
+
+  return !getListDialog();
+}
+
+function pressEscape() {
+  const target = document.activeElement || document.body;
+  ["keydown", "keyup"].forEach((type) => {
+    const evt = new KeyboardEvent(type, {
+      key: "Escape",
+      code: "Escape",
+      keyCode: 27,
+      which: 27,
+      bubbles: true,
+      cancelable: true
+    });
+    target.dispatchEvent(evt);
+    document.dispatchEvent(evt);
+  });
+}
+
+function waitForDialogGone(timeout) {
+  return new Promise((resolve) => {
     const start = Date.now();
     const check = setInterval(() => {
-      if (!document.querySelector('[role="dialog"]') || Date.now() - start > 3000) {
+      if (!getListDialog()) {
         clearInterval(check);
-        resolve();
+        resolve(true);
+      } else if (Date.now() - start > timeout) {
+        clearInterval(check);
+        resolve(false);
       }
-    }, 150);
+    }, 100);
   });
 }
 
@@ -278,7 +368,7 @@ function waitForDialog(timeout) {
     const start = Date.now();
 
     const check = setInterval(() => {
-      const dialog = document.querySelector('[role="dialog"]');
+      const dialog = getListDialog();
 
       if (dialog) {
         clearInterval(check);
@@ -317,8 +407,16 @@ function dispatchFullClick(el) {
 // Scrolling + collecting usernames 
 // ---------------------------------------------------------------------
 
+function getListDialog() {
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+  if (dialogs.length <= 1) return dialogs[0] || null;
+
+  const linkCount = (d) => d.querySelectorAll('a[href^="/"]').length;
+  return dialogs.sort((a, b) => linkCount(b) - linkCount(a))[0];
+}
+
 function getElementAtCenter() {
-  const dialog = document.querySelector('[role="dialog"]');
+  const dialog = getListDialog();
   if (dialog) {
     const rect = dialog.getBoundingClientRect();
     return document.elementFromPoint(
@@ -352,38 +450,38 @@ function findScrollableParent(element) {
   return document.scrollingElement || document.documentElement;
 }
 
+// The scrollable list inside the dialog. Reading only from here (instead of
+// the whole dialog) keeps header/nav links out of the results.
+function getListScope() {
+  const dialog = getListDialog();
+  if (!dialog) return null;
+
+  const scroller = findScrollableParent(getElementAtCenter());
+  if (scroller && dialog.contains(scroller) && scroller !== dialog) {
+    return scroller;
+  }
+  return dialog;
+}
+
 function collectUsernames() {
   try {
-    const dialog = document.querySelector('[role="dialog"]');
-    const scrollContainer = dialog ? dialog : document;
+    // Only ever read from the open list. Falling back to the whole page
+    // would scoop up nav links like /explore/ and /reels/ as "users".
+    const scope = getListScope();
+    if (!scope) return;
 
-    const candidates = scrollContainer.querySelectorAll('a[href^="/"]');
-    const seen = new Set();
+    const target = currentMode === "followers" ? followers : following;
 
-    candidates.forEach((link) => {
+    scope.querySelectorAll('a[href^="/"]').forEach((link) => {
       const href = link.getAttribute("href");
+      const match = href && href.match(/^\/([A-Za-z0-9_.]{1,30})\/?$/);
+      if (!match) return;
 
-      if (href && /^\/[A-Za-z0-9_.]{1,30}\/?$/.test(href)) {
-        const username = href.replace(/^\//, "").replace(/\/$/, "");
+      const username = match[1].toLowerCase();
+      if (RESERVED_PATHS.has(username)) return;
+      if (ownUsername && username === ownUsername) return;
 
-        if (seen.has(username)) return;
-        seen.add(username);
-
-        if (
-          !href.includes("/p/") &&
-          !href.includes("/stories/") &&
-          !href.includes("/reel/") &&
-          !href.includes("/tv/")
-        ) {
-          const fullUsername = "@" + username;
-
-          if (currentMode === "followers") {
-            followers.add(fullUsername);
-          } else {
-            following.add(fullUsername);
-          }
-        }
-      }
+      target.add("@" + match[1]);
     });
 
     updateProgressTracking();
@@ -400,7 +498,7 @@ function updateProgressTracking() {
     totalMode = currentMode;
   }
 
-  const detectedTotal = getTotalCountFromDialog(currentMode);
+  const detectedTotal = getExpectedTotal(currentMode);
 
   if (detectedTotal > 0) {
     totalCount = detectedTotal;
@@ -414,63 +512,73 @@ function updateProgressTracking() {
   });
 }
 
+// Prefer the total captured from the profile header before the list opened.
+function getExpectedTotal(mode) {
+  return expectedTotals[mode] || getTotalCountFromDialog(mode);
+}
+
+// Reads "945 followers" / "1.2M followers" off the element we're about to
+// click. Instagram puts the exact number in a title attribute for big
+// counts ("12,345" shown as "12.3K"), so prefer that.
+function readTotalFromTrigger(trigger) {
+  const titled = trigger.matches?.("[title]")
+    ? trigger
+    : trigger.querySelector?.("[title]");
+  const sources = [titled?.getAttribute("title"), trigger.textContent];
+
+  for (const raw of sources) {
+    const match = (raw || "").match(/\d[\d.,]*\s*[kKmM]?/);
+    if (match) {
+      const n = parseCountText(match[0]);
+      if (n > 0) return n;
+    }
+  }
+  return 0;
+}
+
+// Fallback only: Instagram doesn't reliably expose a count inside the dialog.
 function getTotalCountFromDialog(mode) {
   const selector =
     mode === "followers"
       ? `a[href$="/followers/"] span span`
       : `a[href$="/following/"] span span`;
 
-  const headerEl = document.querySelector(selector);
+  const candidates = [
+    document.querySelector(selector)?.textContent,
+    document.querySelector('[role="dialog"] h1, [role="dialog"] header')
+      ?.textContent
+  ];
 
-  if (headerEl) {
-    const text = headerEl.textContent || headerEl.innerText;
-    const match = text.match(/[\d,.kKmM]+/);
-
+  for (const text of candidates) {
+    // Require a digit so words like "Mutual" can't match the k/m suffix.
+    const match = (text || "").match(/\d[\d.,]*\s*[kKmM]?/);
     if (match) {
       const total = parseCountText(match[0]);
-
-      console.log(
-        `[unfollowed.exe] ${mode} total detected: ${total} from "${text}"`
-      );
-
-      return total;
-    }
-  }
-
-  // Fall back to dialog header
-  const dialogHeader = document.querySelector(
-    '[role="dialog"] h1, [role="dialog"] header'
-  )?.textContent;
-
-  if (dialogHeader) {
-    const match = dialogHeader.match(/[\d,.kKmM]+/);
-
-    if (match) {
-      const total = parseCountText(match[0]);
-
-      console.log(
-        `[unfollowed.exe] ${mode} total detected from dialog: ${total}`
-      );
-
-      return total;
+      if (total > 0) return total;
     }
   }
 
   return 0;
 }
 
+// "945" -> 945, "1,234" -> 1234, "1.234" (EU) -> 1234, "12.3K" -> 12300,
+// "1.2M" -> 1200000. Always returns a finite number (0 if unparseable).
 function parseCountText(text) {
-  const clean = text.replace(/,/g, "");
+  const t = String(text).trim().toLowerCase().replace(/\s/g, "");
+  const suffix = (t.match(/[km]$/) || [])[0];
 
-  if (clean.toLowerCase().includes("k")) {
-    return Math.floor(parseFloat(clean) * 1000);
+  let n;
+  if (suffix) {
+    // "1,2k" (decimal comma) and "1.2k" both mean 1.2 thousand
+    n = Math.round(
+      parseFloat(t.slice(0, -1).replace(",", ".")) * (suffix === "k" ? 1e3 : 1e6)
+    );
+  } else {
+    // Without a suffix every "." or "," is a thousands separator.
+    n = parseInt(t.replace(/[.,]/g, ""), 10);
   }
 
-  if (clean.toLowerCase().includes("m")) {
-    return Math.floor(parseFloat(clean) * 1000000);
-  }
-
-  return parseInt(clean, 10) || 0;
+  return Number.isFinite(n) ? n : 0;
 }
 
 function finishScan() {
