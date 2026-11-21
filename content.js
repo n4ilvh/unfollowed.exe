@@ -1,4 +1,5 @@
 let scrollInterval;
+let scanGeneration = 0;
 const followers = new Set();
 const following = new Set();
 let currentMode = "followers";
@@ -7,6 +8,9 @@ let totalCount = 0;
 let stuckCount = 0;
 let totalMode = null;
 let lastScannedCount = 0;
+// A one-account discrepancy can be caused by Instagram count lag.
+const END_OF_LIST_TOLERANCE = 1;
+const STALL_CHECKS = 15;
 
 // Totals read from the profile header ("945 followers") BEFORE the list is
 // opened. This is the reliable source: once the dialog is open Instagram
@@ -40,7 +44,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.command === "cancelScan") {
+    scanGeneration++;
+    clearInterval(scrollInterval);
+    scrollInterval = null;
+    closeDialog().catch(() => {});
+    sendResponse?.({ ok: true });
+    return;
+  }
+
   if (message.command === "startScrolling") {
+    scanGeneration++;
+    const generation = scanGeneration;
     currentMode = message.mode || "followers";
     scannedCount = 0;
     totalCount = 0;
@@ -70,7 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       // Give Instagram time to render newly loaded users
       setTimeout(() => {
-        if (!scrollInterval) return; // scan already finished/stopped
+        if (!scrollInterval || generation !== scanGeneration) return; // scan cancelled
 
         collectUsernames();
 
@@ -99,15 +114,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           detectedTotal > 0 &&
           currentScannedCount >= detectedTotal
         ) {
-          finishScan();
+          finishScan(true);
           return;
         }
 
-        if (stuckCount >= 15) {
-          console.log(
-            `[unfollowed.exe] ${currentMode} appears to be at the end.`
-          );
-          finishScan();
+        if (stuckCount >= STALL_CHECKS) {
+          const difference = detectedTotal - currentScannedCount;
+          // Never accept an empty or substantially incomplete list.
+          // A one-account shortfall is accepted only after ~10 seconds
+          // without discovering another username, not immediately.
+          const nearComplete = detectedTotal > 0 &&
+            currentScannedCount > 0 &&
+            difference >= 0 && difference <= END_OF_LIST_TOLERANCE;
+          console.log(`[unfollowed.exe] ${currentMode} stalled; missing ${difference} account(s).`);
+          finishScan(nearComplete, nearComplete && difference > 0);
         }
       }, 500);
     }, 700);
@@ -116,6 +136,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.command === "stopScrolling") {
+    scanGeneration++;
     console.log("Scrolling stopped");
     clearInterval(scrollInterval);
     scrollInterval = null;
@@ -126,7 +147,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         followers: Array.from(followers),
         following: Array.from(following)
       },
-      mode: currentMode
+      mode: currentMode,
+      verified: false
     });
   }
 
@@ -581,7 +603,7 @@ function parseCountText(text) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function finishScan() {
+function finishScan(verified = false, approximate = false) {
   clearInterval(scrollInterval);
   scrollInterval = null;
 
@@ -595,6 +617,9 @@ function finishScan() {
       followers: Array.from(followers),
       following: Array.from(following)
     },
-    mode: currentMode
+    mode: currentMode,
+    verified,
+    approximate,
+    expectedTotal: getExpectedTotal(currentMode)
   });
 }

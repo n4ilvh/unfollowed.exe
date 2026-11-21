@@ -3,6 +3,10 @@ const following = [];
 const unfollow = [];
 
 const content = document.querySelector(".window");
+const norm = u => String(u || "").replace(/^@/, "").trim().toLowerCase();
+const escapeHtml = u => String(u).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let ignoredUsers = [];
+
 
 const usernameInput = document.getElementById("username");
 const saveButton = document.getElementById("saveUsername");
@@ -17,11 +21,12 @@ let maxWindow = false;
 // whatever scan state background.js has been keeping in storage.
 // ---------------------------------------------------------------------
 chrome.storage.local.get(
-  ["username", "followers", "following", "unfollow", "scanStatus", "scanStage", "scanError"],
+  ["username", "followers", "following", "unfollow", "scanStatus", "scanStage", "scanError", "dataOwner", "ignoredUsers", "scanProgress", "scanWarnings"],
   (result) => {
-    if (result.followers) followers.push(...result.followers);
-    if (result.following) following.push(...result.following);
-    if (result.unfollow) unfollow.push(...result.unfollow);
+    ignoredUsers = result.dataOwner === result.username ? (result.ignoredUsers || []) : [];
+    if (result.dataOwner === result.username && result.followers) followers.push(...result.followers);
+    if (result.dataOwner === result.username && result.following) following.push(...result.following);
+    if (result.dataOwner === result.username && result.unfollow) unfollow.push(...result.unfollow);
 
     if (!result.username) {
       document.getElementById("mainView").style.display = "none";
@@ -37,12 +42,17 @@ chrome.storage.local.get(
 
     if (result.scanStatus === "scanning") {
       showScanningUI();
-    } else if (result.scanStatus === "complete") {
-      renderCompareView(unfollow, followers, following);
-    } else if (result.scanStatus === "error") {
-      document.getElementById("scanner").style.display = "block";
-      document.getElementById("progressText").textContent =
-        result.scanError || "Something went wrong.";
+      if (result.scanProgress) updateProgress(result.scanProgress.scanned, result.scanProgress.total, result.scanProgress.mode);
+    } else {
+      // Scanner is only visible during an active scan. Completed, stopped,
+      // and failed scans return to Home rather than leaving a stale overlay.
+      document.getElementById("scanner").style.display = "none";
+      if (result.scanStatus === "error" || result.scanStatus === "stopped") {
+        showHomeNotice(result.scanError || "Scan stopped. Previous lists were preserved.");
+      }
+      if (result.scanStatus === "complete" && result.dataOwner === result.username) {
+        updateResultFilters();
+      }
     }
   }
 );
@@ -55,9 +65,7 @@ saveButton.addEventListener("click", () => {
     return;
   }
 
-  chrome.storage.local.set({
-    username: username
-  });
+  chrome.storage.local.set({ username });
 });
 
 // Edit username
@@ -66,17 +74,24 @@ editButton.addEventListener("click", () => {
 
   if (!username) return;
 
-  chrome.storage.local.set({
-    username: username
-  }, () => {
+  chrome.storage.local.get("scanSession", ({ scanSession }) => {
+    if (scanSession) { alert("Stop the active scan before switching accounts."); return; }
+    chrome.storage.local.set({ username }, () => {
     console.log("Username updated:", username);
 
+    // Clear old account results in this popup; storage remains tagged to its owner.
+    followers.length = 0;
+    following.length = 0;
+    unfollow.length = 0;
+    document.getElementById("compareContent").innerHTML = "Scan this account to see results.";
     // Update the main username display/input
     usernameInput.value = "@" + username;
 
     // Clear the edit box
     editUsernameInput.value = "";
     editUsernameInput.placeholder = `@${username}`;
+    chrome.storage.local.set({scanStatus: "idle"});
+  });
   });
 });
 
@@ -121,6 +136,8 @@ document.getElementById("viewBtn").addEventListener("click", () => {
   document.getElementById("toolsView").style.display = "none";
   document.getElementById("compareView").style.display = "block";
   document.getElementById("scanner").style.display = "none";
+  // Rebuild the list each time View opens; do not wait for a filter change.
+  updateResultFilters();
 });
 
 // TOOLS SCREEN
@@ -132,6 +149,7 @@ document.getElementById("toolsBtn").addEventListener("click", () => {
   document.getElementById("scanner").style.display = "none";
 
   
+  showListDates();
   // Username placeholder
   chrome.storage.local.get("username", (result) => {
     if (!result.username) {
@@ -194,7 +212,7 @@ document.getElementById("closeBtn").addEventListener("click", () => {
 // in background.js from here on - even if this popup gets closed.
 // ---------------------------------------------------------------------
 document.getElementById("scanBtn").addEventListener("click", () => {
-  startFullScan();
+  startScan("full");
 });
 
 // if combo box is clicked
@@ -220,6 +238,7 @@ document.addEventListener("click", (e) => {
 
 // If "Reset" is pressed
 document.getElementById("resetBtn").addEventListener("click", () => {
+  if (!confirm("Delete saved lists and scan history?")) return;
   unfollow.length = 0;
   followers.length = 0;
   following.length = 0;
@@ -267,45 +286,90 @@ chrome.runtime.onMessage.addListener((message) => {
     renderCompareView(unfollow, followers, following);
   }
 
-  if (message.command === "scanError") {
-    document.getElementById("scanner").style.display = "block";
-    document.getElementById("progressText").textContent = message.error;
+  if (message.command === "scanStopped") {
+    showHomeNotice("Scan stopped. Your saved lists were preserved.");
+  }
+  if (message.command === "scanFailed") {
+    showHomeNotice(message.error || "Scan failed. Your saved lists were preserved.");
   }
 });
 
 // Finds out who is not following the user
 function findUnfollowers(followingList, followersList) {
-  return followingList.filter((user) => !followersList.includes(user));
+  const set = new Set(followersList.map(norm));
+  return followingList.filter((user) => !set.has(norm(user)));
 }
 
-// Dropdown function
-function createDropdown(title, data) {
-  const hasData = Array.isArray(data);
+// A readable, scrollable list instead of the old collapsed combo box.
+// Render in batches so large Instagram lists do not freeze the popup.
+const RESULT_PAGE_SIZE = 100;
+let displayedResults = [];
+let displayedCount = 0;
 
-  return `
-    <div class="combo">
-      <div class="combo-input">
-        ${title}${hasData ? ` (${data.length})` : ""}
-      </div>
-      <div class="combo-arrow"></div>
+function appendResultRows() {
+  const list = document.getElementById("resultList");
+  if (!list) return;
+  const fragment = document.createDocumentFragment();
+  const next = Math.min(displayedCount + RESULT_PAGE_SIZE, displayedResults.length);
+  for (let i = displayedCount; i < next; i++) {
+    const username = norm(displayedResults[i]);
+    const row = document.createElement("a");
+    row.className = "result-user";
+    row.href = `https://www.instagram.com/${encodeURIComponent(username)}/`;
+    row.target = "_blank";
+    row.rel = "noopener noreferrer";
+    row.title = `Open @${username} on Instagram`;
+    const avatar = document.createElement("span");
+    avatar.className = "result-avatar";
+    avatar.textContent = username.charAt(0).toUpperCase();
+    const name = document.createElement("span");
+    name.className = "result-username";
+    name.textContent = `@${username}`;
+    const arrow = document.createElement("span");
+    arrow.className = "result-open";
+    arrow.textContent = ">";
+    arrow.setAttribute("aria-hidden", "true");
+    row.append(avatar, name, arrow);
+    fragment.appendChild(row);
+  }
+  list.appendChild(fragment);
+  displayedCount = next;
+  const more = document.getElementById("resultMoreBtn");
+  if (more) more.hidden = displayedCount >= displayedResults.length;
+}
 
-      <div class="combo-list">
-        ${
-          hasData
-            ? data
-                .map(
-                  (u) => `
-              <div class="combo-item">
-                <a href="https://instagram.com/${u.slice(1)}" target="_blank">${u}</a>
-              </div>
-            `
-                )
-                .join("")
-            : ""
-        }
-      </div>
-    </div>
-  `;
+function renderResultList(label, data) {
+  displayedResults = data;
+  displayedCount = 0;
+  const root = document.getElementById("compareContent");
+  root.replaceChildren();
+  const header = document.createElement("div");
+  header.className = "result-list-header";
+  const heading = document.createElement("strong");
+  heading.textContent = label;
+  const count = document.createElement("span");
+  count.textContent = `${data.length} account${data.length === 1 ? "" : "s"}`;
+  header.append(heading, count);
+  root.appendChild(header);
+  if (!data.length) {
+    const empty = document.createElement("p");
+    empty.className = "result-empty";
+    empty.textContent = "No accounts match this view.";
+    root.appendChild(empty);
+    return;
+  }
+  const list = document.createElement("div");
+  list.id = "resultList";
+  list.className = "result-list";
+  root.appendChild(list);
+  const more = document.createElement("button");
+  more.id = "resultMoreBtn";
+  more.className = "result-more";
+  more.type = "button";
+  more.textContent = "Show 100 more";
+  more.addEventListener("click", appendResultRows);
+  root.appendChild(more);
+  appendResultRows();
 }
 
 // Renders the results screen. Called whether the popup was open the whole
@@ -318,16 +382,11 @@ function renderCompareView(unfollowList, followersList, followingList) {
   document.getElementById("scanner").style.display = "none";
   document.getElementById("compareView").style.display = "block";
   document.getElementById("resetBtn").style.display = "inline-block";
+  document.getElementById("stopScanBtn").style.display = "none";
   document.getElementById("csvBtn").style.display = "inline-block";
 
-  const compareContent = document.getElementById("compareContent");
-  compareContent.innerHTML = `
-    <div class="combo-container">
-      ${createDropdown("Not Following You Back", unfollowList)}
-      ${createDropdown("Followers", followersList)}
-      ${createDropdown("Following", followingList)}
-    </div>
-  `;
+  updateResultFilters();
+
 }
 
 const port = chrome.runtime.connect({ name: "popup" });
@@ -338,47 +397,63 @@ port.onMessage.addListener((message) => {
   }
 });
 
-async function startFullScan() {
-  // document.getElementById("progressText").textContent += "Starting full Instagram scan";
+document.getElementById("refreshFollowersBtn").addEventListener("click", () => startScan("followers"));
+document.getElementById("refreshFollowingBtn").addEventListener("click", () => startScan("following"));
 
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true
-  });
+async function showListDates() {
+  const { listUpdatedAt = {}, dataOwner, username } = await chrome.storage.local.get(["listUpdatedAt", "dataOwner", "username"]);
+  const fmt = key => dataOwner === username && listUpdatedAt[key]
+    ? new Date(listUpdatedAt[key]).toLocaleString() : "Never";
+  document.getElementById("listDates").textContent =
+    `Followers: ${fmt("followers")}  Following: ${fmt("following")}`;
+}
 
-  if (!tab || !tab.url?.includes("instagram.com")) {
-    showScanningUI();
-    document.getElementById("progressText").textContent =
-      "Please open Instagram first.";
+async function startScan(mode) {
+  const { username } = await chrome.storage.local.get("username");
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let url;
+  try { url = new URL(tab?.url); } catch { /* not an Instagram tab */ }
+  if (url?.hostname !== "www.instagram.com" ||
+      url.pathname.split("/").filter(Boolean)[0]?.toLowerCase() !== username?.toLowerCase()) {
+    showHomeNotice(`Open your Instagram profile (@${username}) first.`);
     return;
   }
-
-  else if (!tab || !tab.url?.includes(username.value.trim().replace(/^@/, ""))) {
-    showScanningUI();
-    document.getElementById("progressText").textContent =
-      "Please open your Instagram profile first.";
+  const command = mode === "full" ? "startFullScan" : "startListScan";
+  const response = await chrome.runtime.sendMessage({ command, tabId: tab.id, username, mode });
+  if (!response?.started) {
+    showHomeNotice(response?.error || "Couldn't start the scan.");
     return;
   }
-
   showScanningUI();
-  updateProgress(0, 0);
+  updateProgress(0, 0, mode === "full" ? "following" : mode);
+}
 
-  // Hand the whole workflow off to background.js. It will drive
-  // content.js through Following -> Followers -> compare, and will
-  // keep going even if this popup closes.
-  chrome.runtime.sendMessage({
-    command: "startFullScan",
-    tabId: tab.id
-  });
+function showHomeNotice(message) {
+  document.getElementById("mainView").style.display = "block";
+  document.getElementById("toolsView").style.display = "none";
+  document.getElementById("helpView").style.display = "none";
+  document.getElementById("compareView").style.display = "none";
+  document.getElementById("scanner").style.display = "none";
+  let notice = document.getElementById("scanNotice");
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.id = "scanNotice";
+    notice.setAttribute("role", "status");
+    notice.className = "home-tip";
+    document.getElementById("mainView").appendChild(notice);
+  }
+  notice.textContent = message;
 }
 
 function showScanningUI() {
+  document.getElementById("scanNotice")?.remove();
   document.getElementById("mainView").style.display = "none";
   document.getElementById("toolsView").style.display = "none";
   document.getElementById("helpView").style.display = "none";
   document.getElementById("compareView").style.display = "none";
   document.getElementById("scanner").style.display = "block";
   initializeProgressBar();
+  document.getElementById("stopScanBtn").style.display = "inline-block";
 }
 
 function initializeProgressBar() {
@@ -442,3 +517,87 @@ function downloadCSV(data) {
     csv
   });
 }
+// Results: searching, sorting, statistics, stale timestamps and ignore list.
+function updateResultFilters() {
+  const key = document.getElementById("resultFilter").value;
+  const query = norm(document.getElementById("resultSearch").value);
+  const followerSet = new Set(followers.map(norm));
+  const followingSet = new Set(following.map(norm));
+  const groups = {
+    unfollow: following.filter(u => !followerSet.has(norm(u))),
+    followers, following,
+    mutual: following.filter(u => followerSet.has(norm(u))),
+    fans: followers.filter(u => !followingSet.has(norm(u)))
+  };
+  const data = (groups[key] || []).filter(u => !ignoredUsers.includes(norm(u)) && norm(u).includes(query))
+    .sort((a,b) => norm(a).localeCompare(norm(b)) * (document.getElementById("resultSort").value === "desc" ? -1 : 1));
+  const labels = { unfollow: "Not following you back", followers: "Followers", following: "Following", mutual: "Mutual followers", fans: "Follows you only" };
+  renderResultList(labels[key] || "Accounts", data);
+  document.getElementById("resultStats").textContent = `Followers: ${followers.length} | Following: ${following.length} | Mutual: ${groups.mutual.length} | Not following back: ${groups.unfollow.length}`;
+  chrome.storage.local.get(["listUpdatedAt", "dataOwner", "username", "scanWarnings"], r => {
+    const dates = r.listUpdatedAt || {};
+    const notices = [];
+    if (r.dataOwner === r.username) {
+      if (dates.followers && dates.following && Math.abs(dates.followers - dates.following) > 86400000) {
+        notices.push("⚠ Lists were scanned more than 24 hours apart.");
+      }
+      notices.push(...Object.values(r.scanWarnings || {}));
+    }
+    document.getElementById("staleWarning").textContent = notices.join(" ");
+  });
+}
+["resultSearch", "resultFilter", "resultSort"].forEach(id => document.getElementById(id).addEventListener(id === "resultSearch" ? "input" : "change", updateResultFilters));
+document.getElementById("stopScanBtn").addEventListener("click", async () => {
+  document.getElementById("stopScanBtn").disabled = true;
+  try { await chrome.runtime.sendMessage({command:"stopScan"}); }
+  finally { document.getElementById("stopScanBtn").disabled = false; }
+});
+async function showIgnored() {
+  const r = await chrome.storage.local.get(["ignoredUsers", "dataOwner", "username"]);
+  ignoredUsers = r.dataOwner === r.username ? (r.ignoredUsers || []) : [];
+  const box = document.getElementById("ignoredList"); box.replaceChildren();
+  ignoredUsers.forEach(u => {
+    const row = document.createElement("div"); row.textContent = "@" + u + " ";
+    const btn = document.createElement("button"); btn.textContent = "Remove";
+    btn.addEventListener("click", async () => { ignoredUsers = ignoredUsers.filter(x=>x!==u); await chrome.storage.local.set({ignoredUsers}); showIgnored(); });
+    row.append(btn); box.append(row);
+  });
+}
+document.getElementById("toolsBtn").addEventListener("click", showIgnored);
+document.getElementById("ignoreBtn").addEventListener("click", async () => {
+  const u = norm(document.getElementById("ignoreInput").value);
+  if (!/^[a-z0-9._]{1,30}$/.test(u)) return alert("Enter a valid Instagram username.");
+  const r = await chrome.storage.local.get(["dataOwner", "username"]);
+  if (r.dataOwner !== r.username) return alert("Scan this account before adding ignored users.");
+  ignoredUsers = [...new Set([...ignoredUsers, u])];
+  await chrome.storage.local.set({ignoredUsers});
+  document.getElementById("ignoreInput").value = ""; showIgnored();
+});
+document.getElementById("clearDataBtn").addEventListener("click", async () => {
+  if (!confirm("Delete all saved scan lists, history and ignored users?")) return;
+  await chrome.runtime.sendMessage({command:"resetScan"});
+  followers.length=following.length=unfollow.length=0; ignoredUsers=[];
+  document.getElementById("compareContent").textContent = "Saved data cleared."; showListDates(); showIgnored();
+});
+document.getElementById("backupBtn").addEventListener("click", async () => {
+  const r = await chrome.storage.local.get(["username","dataOwner","followers","following","listUpdatedAt","scanHistory","ignoredUsers"]);
+  const blob = new Blob([JSON.stringify({format:"unfollowed-backup-v1",...r},null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=url; a.download="unfollowed-backup.json"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),10000);
+});
+document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change", async e => {
+  try {
+    const f=e.target.files[0]; if (!f || f.size > 5_000_000) throw Error("Backup missing or too large (5 MB max).");
+    const data=JSON.parse(await f.text());
+    if (data.format!=="unfollowed-backup-v1" || !Array.isArray(data.followers) || !Array.isArray(data.following) || !data.username || norm(data.dataOwner)!==norm(data.username)) throw Error("Invalid backup file.");
+    if (data.followers.length>100000 || data.following.length>100000 || ![...data.followers,...data.following].every(u=>typeof u==="string" && /^[a-zA-Z0-9._]{1,30}$/.test(norm(u)))) throw Error("Invalid usernames in backup.");
+    const active=await chrome.storage.local.get("scanSession"); if(active.scanSession) throw Error("Stop the current scan first.");
+    if (!confirm(`Restore lists for @${data.username}? This replaces your current saved data.`)) return;
+    const fs=[...new Set(data.followers.map(norm))], fg=[...new Set(data.following.map(norm))];
+    const set=new Set(fs);
+    await chrome.storage.local.set({username:norm(data.username),dataOwner:norm(data.username),followers:fs,following:fg,unfollow:fg.filter(u=>!set.has(u)),listUpdatedAt:data.listUpdatedAt||{},scanHistory:Array.isArray(data.scanHistory)?data.scanHistory.slice(0,15):[],ignoredUsers:Array.isArray(data.ignoredUsers)?data.ignoredUsers.filter(u=>typeof u==="string").map(norm).slice(0,1000):[],scanStatus:"complete"});
+    location.reload();
+  } catch(err) { alert(err.message); } finally { e.target.value=""; }
+});

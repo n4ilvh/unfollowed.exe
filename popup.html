@@ -3,7 +3,7 @@
 <html>
   <head>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@200..900&family=Jersey+25&family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&display=swap" rel="stylesheet">
+
   </head>
   <body>
 
@@ -39,28 +39,93 @@
             <button id="helpBtn">Help</button>
           </div>
 
+
           <!-- HOME TAB -->
           <div id="mainView" class="main-view">
-            <div class="scan-buttons">
-              <button id="scanBtn" class="menu-button-icon">
-                <img src="media/icons/scan.ico">
-                Scan Instagram
-              </button>
-              <button id="igBtn" class="menu-button-icon">
-                <img src="media/icons/openIg.ico">
-                Open Instagram
-              </button>
+
+            <div class="home-header">
+              <div class="home-logo">U</div>
+
+              <div class="home-heading">
+                <h2>unfollowed.exe</h2>
+                <p>Instagram follower manager</p>
+              </div>
             </div>
+
+            <div class="home-panel">
+              <div class="home-panel-title">Quick Start</div>
+
+              <p class="home-description">
+                Find out who's not following you back.
+                Scan your Instagram account to get started.
+              </p>
+
+              <div class="scan-buttons">
+                <button id="scanBtn" class="home-action primary-action">
+                  <img src="media/icons/scan.ico" alt="">
+                  <span>Scan Instagram</span>
+                </button>
+
+                <button id="igBtn" class="home-action secondary-action">
+                  <img src="media/icons/openIg.ico" alt="">
+                  <span>Open Instagram</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="home-tip">
+              <strong>Tip:</strong>
+              Keep the Instagram tab open until the scan finishes.
+            </div>
+
+            <div class="home-footer">
+              <span>v3.1</span>
+            </div>
+
           </div>
 
-            <div id="scanner" style="display: none;">
-              <div style="text-align: center; margin: 10px 0;">
+          <!-- SCANNER SCREEN -->
+          <div id="scanner" class="scanner" style="display: none;">
+
+            <div class="scanner-panel">
+
+              <div class="scanner-panel-title">
+                <span>Scanning Instagram</span>
+              </div>
+
+              <div class="scanner-content">
+
+                <div class="scanner-icon">
+                  <img src="media/icons/scan.ico" alt="">
+                </div>
+
+                <h3 class="scanner-heading">
+                  Scanning your account...
+                </h3>
+
+                <p class="scanner-description">
+                  Collecting followers and following.
+                  Please keep your Instagram tab open.
+                </p>
+
                 <div class="progress-bar-container">
                   <div class="progress-bar" id="progressBar"></div>
                 </div>
-                <div id="progressText" class="progress-text">Scanning...</div>
+
+                <div id="progressText" class="progress-text" aria-live="polite">
+                  Preparing scan...
+                </div>
+
+                <button id="stopScanBtn" class="scanner-stop-button">
+                  Stop Scan
+                </button>
+
               </div>
+
             </div>
+
+          </div>
+
             
           <!-- TOOLS TAB -->
            <div id="toolsView">
@@ -72,28 +137,34 @@
               <input id="editUsername" type="text">
               <button id="editBtn">Ok</button>
             </div>
-            
+            <div style="margin: 12px 4px; color: black; font-size: 12px;">
+              <strong>Update saved lists</strong>
+              <div style="display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap;">
+                <button id="refreshFollowersBtn">Refresh Followers</button>
+                <button id="refreshFollowingBtn">Refresh Following</button>
+              </div>
+              <div id="listDates" style="margin-top: 8px; line-height: 1.6;"></div>
+              <hr><strong>Manage data</strong><div style="margin-top:6px; display:flex; gap:5px; flex-wrap:wrap;">
+                <button id="backupBtn">Backup JSON</button><button id="importBtn">Restore JSON</button>
+                <input id="importFile" type="file" accept="application/json,.json" hidden>
+                <button id="clearDataBtn">Clear Data</button>
+              </div><div style="margin-top:8px;"><strong>Ignore account</strong><input id="ignoreInput" placeholder="@username" style="width:110px"><button id="ignoreBtn">Add</button><div id="ignoredList"></div></div>
+            </div>
            </div>
           <!-- Help Screen -->
-          <div id="helpView" style="display:none; color: rgb(0, 0, 0); width: 230px;">
-
-            <div class="help-text"> 
-              <div class="help-text-description">
-                <div>1. Open unfollowed.exe and press Open Instagram</div>
-                <div>2. Open unfollowed.exe and press Scan Instagram</div>
-                <div>3. unfollowed.exe will begin scanning your following and followers lists</div>
-                <div>4. When the end of the list is reached &nbsp;&nbsp;&nbsp;&nbsp;click&nbsp;<span style="font-weight: 200;">'Save'</span></div>
-                <div>5. Do the same for your following tab</div>
-                <div>6. Open unfollowed.exe and press   &nbsp;&nbsp;&nbsp;&nbsp;<span style="font-weight: 200;">'Compare'</span></div>
-              </div>
-              <div class="help-text-important"><u>Important: Do not leave the tab while scanning!</u></div>
-            </div>
-
+          <div id="helpView" style="display:none; color:black; width:230px; padding:8px; font-size:12px;">
+            <strong>Help &amp; Support</strong>
+            <details open><summary>Getting started</summary><p>Open your own Instagram profile, then select Scan Instagram. Keep the tab open until scanning finishes.</p></details>
+            <details><summary>Refresh just one list</summary><p>Tools > Refresh Followers or Refresh Following. The other saved list stays unchanged. Results may reflect different scan dates.</p></details>
+            <details><summary>Stopping a scan</summary><p>Click Stop Scan. Any unfinished scan is discarded and previously saved lists are kept.</p></details>
+            <details><summary>Incorrect results or stuck scans</summary><p>Refresh your Instagram profile and retry. A partial scan will not replace a saved list. Instagram may throttle loading or change its interface.</p></details>
+            <details><summary>Privacy and backups</summary><p>Saved usernames and lists are stored in Chrome extension local storage. Use Tools to export, restore, or delete them. The extension does not require your Instagram password.</p></details>
+            <details><summary>About</summary><p>unfollowed.exe v3.1. Not affiliated with Instagram.</p></details>
           </div>
 
           <!-- Compare Screen -->
-          <div id="compareView" style="display: none; width: 230px; align-items: center;">
-              <div id="compareContent" class="compare-content"></div>
+          <div id="compareView" style="display: none;">
+              <div class="result-controls"><input id="resultSearch" placeholder="Search usernames..." aria-label="Search usernames"><select id="resultFilter"><option value="unfollow">Not following back</option><option value="followers">Followers</option><option value="following">Following</option><option value="mutual">Mutual</option><option value="fans">Fans</option></select><select id="resultSort"><option value="asc">A-Z</option><option value="desc">Z-A</option></select><div id="resultStats" style="font-size:11px"></div><div id="staleWarning" style="font-size:11px"></div></div><div id="compareContent" class="compare-content"></div>
               <div class="reset-button-container">
                 <button id="resetBtn" style="width: 100px; font-size: 11px;">Reset</button>
                 <button id="csvBtn" style="width: 100px; font-size: 11px;">Download CSV</button>

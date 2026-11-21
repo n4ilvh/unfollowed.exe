@@ -9,10 +9,11 @@
 
 let popupPort = null;
 
-let scanState = {
-  stage: "idle", // idle | following | followers | complete | error
-  tabId: null
-};
+let scanState = { stage: "idle", tabId: null };
+let busy = false;
+const HISTORY_LIMIT = 15;
+const normalize = u => String(u || "").replace(/^@/, "").trim().toLowerCase();
+const notify = msg => chrome.runtime.sendMessage(msg).catch(() => {});
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === "popup") {
@@ -29,8 +30,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("Background received message:", message);
 
   if (message.command === "startFullScan") {
-    beginFullScan(message.tabId);
-    sendResponse?.({ started: true });
+    beginScan(message.tabId, message.username, "full").then(sendResponse);
+    return true;
+  }
+
+  if (message.command === "startListScan") {
+    beginScan(message.tabId, message.username, message.mode).then(sendResponse);
     return true;
   }
 
@@ -40,7 +45,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.command === "progressUpdate") {
-    forwardProgress(message);
+    forwardProgress(message, sender);
     return true;
   }
 
@@ -50,13 +55,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.command === "resetScan") {
-    scanState = { stage: "idle", tabId: null };
-    chrome.storage.local.remove(["followers", "following", "unfollow", "scanStatus"]);
-    chrome.action.setBadgeText({ text: "" });
-    sendResponse?.({ ok: true });
+  if (message.command === "stopScan") {
+    stopScan().then(sendResponse);
     return true;
   }
+
+  if (message.command === "resetScan") {
+    stopScan().then(async () => {
+      await chrome.storage.local.remove(["followers", "following", "unfollow", "scanStatus", "scanStage", "scanError", "scanSession", "listUpdatedAt", "dataOwner", "scanHistory", "ignoredUsers", "scanWarnings", "scanProgress"]);
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
 
   if (message.type === "DOWNLOAD_CSV") {
     const csv = message.csv;
@@ -72,20 +83,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // Keep message channel open for async response
 });
 
-function beginFullScan(tabId) {
-  scanState = { stage: "following", tabId };
-
-  chrome.storage.local.set({
-    scanStatus: "scanning",
-    scanStage: "following",
-    followers: [],
-    following: []
-  });
-
-  chrome.action.setBadgeText({ text: "..." });
+async function beginScan(tabId, username, mode) {
+  const validModes = ["full", "followers", "following"];
+  if (!validModes.includes(mode) || !Number.isInteger(tabId) || !username) {
+    return { started: false, error: "Invalid scan request." };
+  }
+  const stored = await chrome.storage.local.get(["scanSession", "username"]);
+  if (busy || stored.scanSession) return { started: false, error: "A scan is already running. Stop it first if it is stuck." };
+  if (stored.username?.toLowerCase() !== username.toLowerCase()) {
+    return { started: false, error: "Saved username changed. Reopen the extension." };
+  }
+  const firstMode = mode === "full" ? "following" : mode;
+  const session = { tabId, username, mode, stage: firstMode,
+    pending: {}, startedAt: Date.now() };
+  busy = true;
+  scanState = { stage: firstMode, tabId };
+  await chrome.storage.local.set({ scanSession: session, scanStatus: "scanning",
+    scanStage: firstMode, scanError: "", scanWarnings: {}, scanProgress: { scanned: 0, total: 0, mode: firstMode } });
+  await chrome.action.setBadgeText({ text: "..." });
   chrome.action.setBadgeBackgroundColor({ color: "#000080" });
-
-  openAndScan(tabId, "following");
+  openAndScan(tabId, firstMode);
+  return { started: true };
 }
 
 function openAndScan(tabId, mode) {
@@ -109,43 +127,57 @@ function openAndScan(tabId, mode) {
   });
 }
 
-function handleUsernamesCollected(message, sender) {
-  const { followers = [], following = [] } = message.data || {};
+async function handleUsernamesCollected(message, sender) {
+  const { scanSession: session } = await chrome.storage.local.get("scanSession");
+  if (!session || sender?.tab?.id !== session.tabId || message.mode !== session.stage) return;
+  const list = message.data?.[message.mode];
+  if (!Array.isArray(list)) return failScan("The scan did not return a valid list.");
+  if (!message.verified) return failScan("Instagram stopped loading before the expected count was reached. Saved lists were kept. Refresh the profile and try again.");
+  const cleaned = [...new Set(list.filter(u => typeof u === "string" && u.trim()).map(normalize))];
+  session.pending[message.mode] = cleaned;
+  session.warnings = session.warnings || {};
+  if (message.approximate) {
+    session.warnings[message.mode] = `Instagram reported ${message.expectedTotal} ${message.mode}, but only ${cleaned.length} loaded. Results may be missing an account.`;
+  }
+  const latest = await chrome.storage.local.get("scanSession");
+  if (!latest.scanSession || latest.scanSession.startedAt !== session.startedAt || latest.scanSession.stage !== session.stage) return;
 
-  const patch = {};
-  if (message.mode === "following") patch.following = following;
-  if (message.mode === "followers") patch.followers = followers;
-  chrome.storage.local.set(patch);
-
-  if (message.mode === "following") {
-    scanState.stage = "followers";
-    chrome.storage.local.set({ scanStage: "followers" });
-
-    // MV3 service workers can be restarted mid-scan and lose scanState, so
-    // fall back to the tab that sent this message.
-    const tabId = scanState.tabId || sender?.tab?.id;
-    if (!tabId) {
-      failScan("Lost track of the Instagram tab.");
-      return;
-    }
-    scanState.tabId = tabId;
-
-    // Close the "Following" dialog before opening "Followers" - Instagram
-    // won't open a second overlay on top of the first one.
-    closeAnyOpenDialog(tabId).then(() => {
-      openAndScan(tabId, "followers");
-    });
+  if (session.mode === "full" && message.mode === "following") {
+    session.stage = "followers";
+    await chrome.storage.local.set({ scanSession: session, scanStage: "followers" });
+    await closeAnyOpenDialog(session.tabId);
+    const check = await chrome.storage.local.get("scanSession");
+    if (check.scanSession?.startedAt === session.startedAt && check.scanSession.stage === "followers") openAndScan(session.tabId, "followers");
     return;
   }
 
-  if (message.mode === "followers") {
-    // Use the saved Following list rather than whatever content.js happens
-    // to still be holding in memory.
-    chrome.storage.local.get("following", (stored) => {
-      const savedFollowing = stored.following?.length ? stored.following : following;
-      finishFullScan(savedFollowing, followers);
-    });
+  const old = await chrome.storage.local.get(["followers", "following", "dataOwner", "listUpdatedAt", "username", "scanHistory"]);
+  if (old.username?.toLowerCase() !== session.username.toLowerCase()) {
+    return failScan("Account changed during scan. Previous data was preserved.");
   }
+  const sameOwner = old.dataOwner?.toLowerCase() === session.username.toLowerCase();
+  const followers = session.pending.followers ?? (sameOwner ? old.followers : undefined);
+  const following = session.pending.following ?? (sameOwner ? old.following : undefined);
+  const updatedAt = { ...(sameOwner ? old.listUpdatedAt : {}) };
+  for (const mode of Object.keys(session.pending)) updatedAt[mode] = Date.now();
+  const completePair = Array.isArray(followers) && Array.isArray(following);
+  const followerSet = new Set((followers ?? []).map(normalize));
+  const unfollow = completePair ? following.filter(u => !followerSet.has(normalize(u))) : [];
+  const history = sameOwner && Array.isArray(old.scanHistory) ? old.scanHistory : [];
+  history.unshift({ timestamp: Date.now(), mode: session.mode, followers: followers ?? [], following: following ?? [] });
+  const stillRunning = await chrome.storage.local.get("scanSession");
+  if (stillRunning.scanSession?.startedAt !== session.startedAt) return;
+  await chrome.storage.local.set({
+    dataOwner: session.username, followers: followers ?? [], following: following ?? [],
+    unfollow, listUpdatedAt: updatedAt, scanHistory: history.slice(0, HISTORY_LIMIT), scanStatus: "complete", scanStage: "complete", scanProgress: null,
+    scanWarnings: session.warnings || {}, scanError: ""
+  });
+  await chrome.storage.local.remove("scanSession");
+  busy = false;
+  scanState.stage = "complete";
+  chrome.action.setBadgeText({ text: completePair ? String(unfollow.length) : "" });
+  chrome.action.setBadgeBackgroundColor({ color: "#800000" });
+  notify({ command: "scanComplete", followers: followers ?? [], following: following ?? [], unfollow, warnings: session.warnings || {} });
 }
 
 function closeAnyOpenDialog(tabId) {
@@ -169,74 +201,69 @@ function closeAnyOpenDialog(tabId) {
   });
 }
 
-function finishFullScan(following, followers) {
-  const unfollow = following.filter((u) => !followers.includes(u));
-
-  scanState.stage = "complete";
-
-  chrome.storage.local.set({
-    followers,
-    following,
-    unfollow,
-    scanStatus: "complete",
-    scanStage: "complete"
-  });
-
-  chrome.action.setBadgeText({ text: String(unfollow.length) });
-  chrome.action.setBadgeBackgroundColor({ color: "#800000" });
-
-  chrome.runtime.sendMessage({
-    command: "scanComplete",
-    followers,
-    following,
-    unfollow
-  }).catch(() => {});
-
-  if (chrome.notifications) {
-    chrome.notifications.create({
-      type: "basic",
-      iconUrl: "icons/icon128.png",
-      title: "unfollowed.exe",
-      message: `Scan complete! ${unfollow.length} people don't follow you back.`
-    });
+async function stopScan() {
+  const { scanSession } = await chrome.storage.local.get("scanSession");
+  if (scanSession?.tabId) {
+    await chrome.tabs.sendMessage(scanSession.tabId, { command: "cancelScan" }).catch(() => {});
   }
+  await chrome.storage.local.remove("scanSession");
+  busy = false;
+  scanState = { stage: "idle", tabId: null };
+  await chrome.storage.local.set({ scanStatus: "stopped", scanStage: "idle", scanProgress: null, scanError: "Scan stopped. Your previously saved lists were preserved." });
+  await chrome.action.setBadgeText({ text: "" });
+  notify({ command: "scanStopped" });
+  return { ok: true };
 }
 
-function failScan(errorText) {
+async function failScan(errorText) {
+  const { scanSession } = await chrome.storage.local.get("scanSession");
+  if (!scanSession) return;
+  busy = false;
+  await chrome.storage.local.remove("scanSession");
   scanState.stage = "error";
+  chrome.tabs.sendMessage(scanSession.tabId, { command: "cancelScan" }).catch(() => {});
 
   chrome.storage.local.set({
     scanStatus: "error",
-    scanError: errorText
+    scanError: errorText,
+    scanProgress: null
   });
 
   chrome.action.setBadgeText({ text: "!" });
   chrome.action.setBadgeBackgroundColor({ color: "#a00000" });
 
   chrome.runtime.sendMessage({
-    command: "scanError",
+    command: "scanFailed",
     error: errorText
   }).catch(() => {});
 }
 
-function forwardProgress(message) {
+async function forwardProgress(message, sender) {
+  const { scanSession } = await chrome.storage.local.get("scanSession");
+  if (!scanSession || sender?.tab?.id !== scanSession.tabId || message.mode !== scanSession.stage) return;
+  await chrome.storage.local.set({ scanProgress: { scanned: message.scanned, total: message.total, mode: message.mode } });
   if (popupPort) {
-    popupPort.postMessage({
+    try { popupPort.postMessage({
       command: "progressUpdate",
       scanned: message.scanned,
       total: message.total,
       mode: message.mode
-    });
+    }); } catch {}
   }
 
-  chrome.runtime.sendMessage({
-    command: "progressUpdate",
-    scanned: message.scanned,
-    total: message.total,
-    mode: message.mode
-  }).catch(() => {});
+  // Do not rebroadcast progressUpdate via runtime.sendMessage here:
+  // background.js would receive its own broadcast and loop forever.
 }
 
 function fileTimestamp() {
   return new Date().toISOString().slice(0, 10);
 }
+// Clear abandoned sessions after the scan tab closes or browser restarts.
+chrome.tabs.onRemoved.addListener(async tabId => {
+  const { scanSession } = await chrome.storage.local.get("scanSession");
+  if (scanSession?.tabId === tabId) await failScan("Instagram tab was closed. Previous data was preserved.");
+});
+chrome.runtime.onStartup.addListener(async () => {
+  const { scanSession } = await chrome.storage.local.get("scanSession");
+  if (scanSession) await failScan("Browser restarted during scan. Start a new scan.");
+});
