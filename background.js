@@ -132,12 +132,12 @@ async function handleUsernamesCollected(message, sender) {
   if (!session || sender?.tab?.id !== session.tabId || message.mode !== session.stage) return;
   const list = message.data?.[message.mode];
   if (!Array.isArray(list)) return failScan("The scan did not return a valid list.");
-  if (!message.verified) return failScan("Instagram stopped loading before the expected count was reached. Saved lists were kept. Refresh the profile and try again.");
+  if (!message.verified) return failScan("Instagram stopped loading before enough accounts were collected. Previously saved lists were kept. Refresh the profile and try again.");
   const cleaned = [...new Set(list.filter(u => typeof u === "string" && u.trim()).map(normalize))];
   session.pending[message.mode] = cleaned;
   session.warnings = session.warnings || {};
   if (message.approximate) {
-    session.warnings[message.mode] = `Instagram reported ${message.expectedTotal} ${message.mode}, but only ${cleaned.length} loaded. Results may be missing an account.`;
+    session.warnings[message.mode] = `Instagram reported ${message.expectedTotal} ${message.mode}, but only ${cleaned.length} loaded. Results may be incomplete.`;
   }
   const latest = await chrome.storage.local.get("scanSession");
   if (!latest.scanSession || latest.scanSession.startedAt !== session.startedAt || latest.scanSession.stage !== session.stage) return;

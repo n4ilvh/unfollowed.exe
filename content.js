@@ -8,9 +8,13 @@ let totalCount = 0;
 let stuckCount = 0;
 let totalMode = null;
 let lastScannedCount = 0;
+let lastGrowthAt = 0;
 // A one-account discrepancy can be caused by Instagram count lag.
-const END_OF_LIST_TOLERANCE = 1;
-const STALL_CHECKS = 15;
+// Allow Instagram 25 seconds to load more accounts before treating a list
+// as finished. This is elapsed time, not a count of timer callbacks.
+const STALL_TIMEOUT_MS = 25000;
+// Guard against saving a list that stopped halfway through loading.
+const MIN_COMPLETENESS = 0.80;
 
 // Totals read from the profile header ("945 followers") BEFORE the list is
 // opened. This is the reliable source: once the dialog is open Instagram
@@ -62,6 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     stuckCount = 0;
     totalMode = null;
     lastScannedCount = 0;
+    lastGrowthAt = Date.now();
 
     // Start this list from a clean slate so leftovers from an earlier or
     // aborted scan can't inflate the count.
@@ -100,6 +105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         } else {
           stuckCount = 0;
           lastScannedCount = currentScannedCount;
+          lastGrowthAt = Date.now();
         }
 
         const detectedTotal = getExpectedTotal(currentMode);
@@ -118,16 +124,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        if (stuckCount >= STALL_CHECKS) {
-          const difference = detectedTotal - currentScannedCount;
-          // Never accept an empty or substantially incomplete list.
-          // A one-account shortfall is accepted only after ~10 seconds
-          // without discovering another username, not immediately.
-          const nearComplete = detectedTotal > 0 &&
-            currentScannedCount > 0 &&
-            difference >= 0 && difference <= END_OF_LIST_TOLERANCE;
-          console.log(`[unfollowed.exe] ${currentMode} stalled; missing ${difference} account(s).`);
-          finishScan(nearComplete, nearComplete && difference > 0);
+        // The header count can lag behind Instagram's actual list. After a
+        // sustained period with no new usernames, accept a near-complete list
+        // and mark it approximate instead of throwing it away.
+        if (Date.now() - lastGrowthAt >= STALL_TIMEOUT_MS) {
+          const hasUsers = currentScannedCount > 0;
+          const completeness = detectedTotal > 0
+            ? currentScannedCount / detectedTotal
+            : 0;
+          const acceptable = hasUsers && detectedTotal > 0 &&
+            completeness >= MIN_COMPLETENESS;
+          console.log(`[unfollowed.exe] ${currentMode} idle for ${STALL_TIMEOUT_MS / 1000}s; ` +
+            `${currentScannedCount}/${detectedTotal} (${Math.round(completeness * 100)}%).`);
+          finishScan(acceptable, acceptable && currentScannedCount !== detectedTotal);
         }
       }, 500);
     }, 700);
@@ -169,6 +178,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     totalCount = 0;
     stuckCount = 0;
     lastScannedCount = 0;
+    lastGrowthAt = 0;
     totalMode = null;
   }
 

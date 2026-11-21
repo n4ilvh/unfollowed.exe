@@ -404,8 +404,8 @@ async function showListDates() {
   const { listUpdatedAt = {}, dataOwner, username } = await chrome.storage.local.get(["listUpdatedAt", "dataOwner", "username"]);
   const fmt = key => dataOwner === username && listUpdatedAt[key]
     ? new Date(listUpdatedAt[key]).toLocaleString() : "Never";
-  document.getElementById("listDates").textContent =
-    `Followers: ${fmt("followers")}  Following: ${fmt("following")}`;
+  document.getElementById("listDates").innerHTML =
+    `Followers: ${fmt("followers")}<br>Following: ${fmt("following")}`;
 }
 
 async function startScan(mode) {
